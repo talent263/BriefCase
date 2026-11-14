@@ -1,0 +1,192 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function inFirm(firmId) {
+      return signedIn() && request.auth.token.firmId == firmId;
+    }
+
+    function canManageFirm() {
+      return signedIn() && request.auth.token.role in ['administrator', 'partner'];
+    }
+
+    function validTenantWrite() {
+      return request.resource.data.firmId is string
+        && request.resource.data.firmId == request.auth.token.firmId;
+    }
+
+    function matterInFirm(matterId, firmId) {
+      return matterId is string
+        && exists(/databases/$(database)/documents/matters/$(matterId))
+        && get(/databases/$(database)/documents/matters/$(matterId)).data.firmId == firmId;
+    }
+
+    match /users/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow list, create, update, delete: if false;
+    }
+
+    match /firms/{firmId} {
+      allow read: if inFirm(firmId);
+      allow create: if inFirm(firmId) && canManageFirm() && validTenantWrite();
+      allow update: if inFirm(firmId) && canManageFirm()
+        && request.resource.data.firmId == resource.data.firmId;
+      allow delete: if false;
+    }
+
+    match /team/{memberId} {
+      allow read: if signedIn() && resource.data.firmId == request.auth.token.firmId;
+      allow write: if false;
+    }
+
+    match /teamInvites/{inviteId} {
+      allow read: if signedIn() && canManageFirm() && resource.data.firmId == request.auth.token.firmId;
+      allow write: if false;
+    }
+
+    match /matterCounters/{firmId} {
+      allow read: if inFirm(firmId);
+      allow create: if inFirm(firmId) && validTenantWrite()
+        && request.resource.data.lastMatterNumber is int
+        && request.resource.data.lastMatterNumber >= 0;
+      allow update: if inFirm(firmId) && resource.data.firmId == firmId
+        && request.resource.data.firmId == firmId
+        && request.resource.data.lastMatterNumber is int
+        && request.resource.data.lastMatterNumber == resource.data.lastMatterNumber + 1;
+      allow delete: if false;
+    }
+
+    match /matters/{matterId} {
+      allow read: if inFirm(resource.data.firmId);
+      allow create: if validTenantWrite()
+        && request.resource.data.matterName is string
+        && request.resource.data.clientName is string
+        && request.resource.data.matterNumber == matterId
+        && request.resource.data.practiceArea in ['Corporate', 'Conveyancing', 'Labour', 'Family law', 'Private client', 'Litigation']
+        && request.resource.data.status in ['open', 'review', 'waiting']
+        && request.resource.data.nextDate is string
+        && request.resource.data.createdAt is string;
+      allow update: if inFirm(resource.data.firmId) && validTenantWrite()
+        && request.resource.data.matterNumber == resource.data.matterNumber
+        && request.resource.data.practiceArea in ['Corporate', 'Conveyancing', 'Labour', 'Family law', 'Private client', 'Litigation']
+        && request.resource.data.status in ['open', 'review', 'waiting']
+        && request.resource.data.matterName is string
+        && request.resource.data.clientName is string
+        && request.resource.data.nextDate is string
+        && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if inFirm(resource.data.firmId);
+    }
+
+    match /clients/{clientId} {
+      allow read: if inFirm(resource.data.firmId);
+      allow create: if validTenantWrite()
+        && request.resource.data.name is string
+        && request.resource.data.type in ['Individual', 'Company']
+        && request.resource.data.email is string
+        && request.resource.data.phone is string
+        && request.resource.data.address is string
+        && request.resource.data.createdAt is string;
+      allow update: if inFirm(resource.data.firmId) && validTenantWrite()
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.name is string
+        && request.resource.data.type in ['Individual', 'Company']
+        && request.resource.data.email is string
+        && request.resource.data.phone is string
+        && request.resource.data.address is string;
+      allow delete: if inFirm(resource.data.firmId);
+    }
+
+    match /tasks/{taskId} {
+      allow read: if inFirm(resource.data.firmId);
+      allow create: if validTenantWrite()
+        && request.resource.data.title is string
+        && request.resource.data.matterId is string
+        && matterInFirm(request.resource.data.matterId, request.auth.token.firmId)
+        && request.resource.data.matterNumber is string
+        && request.resource.data.assignedTo is string
+        && request.resource.data.dueDate is string
+        && request.resource.data.completed is bool
+        && request.resource.data.createdAt is string;
+      allow update: if inFirm(resource.data.firmId) && validTenantWrite()
+        && request.resource.data.createdAt == resource.data.createdAt
+        && matterInFirm(request.resource.data.matterId, request.auth.token.firmId)
+        && request.resource.data.title is string
+        && request.resource.data.assignedTo is string
+        && request.resource.data.dueDate is string
+        && request.resource.data.completed is bool;
+      allow delete: if inFirm(resource.data.firmId);
+    }
+
+    match /invoices/{invoiceId} {
+      allow read: if inFirm(resource.data.firmId);
+      allow create: if validTenantWrite()
+        && request.resource.data.invoiceNumber is string
+        && request.resource.data.matterId is string
+        && matterInFirm(request.resource.data.matterId, request.auth.token.firmId)
+        && request.resource.data.clientName is string
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0
+        && request.resource.data.status in ['Sent', 'Overdue', 'Paid']
+        && request.resource.data.dueDate is string
+        && request.resource.data.createdAt is string;
+      allow update: if inFirm(resource.data.firmId) && validTenantWrite()
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.invoiceNumber == resource.data.invoiceNumber
+        && request.resource.data.matterId == resource.data.matterId
+        && matterInFirm(request.resource.data.matterId, request.auth.token.firmId)
+        && request.resource.data.clientName is string
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0
+        && request.resource.data.status in ['Sent', 'Overdue', 'Paid']
+        && request.resource.data.dueDate is string;
+      allow delete: if inFirm(resource.data.firmId);
+    }
+
+    match /calendar/{eventId} {
+      allow read: if inFirm(resource.data.firmId);
+      allow create: if validTenantWrite()
+        && request.resource.data.title is string
+        && request.resource.data.location is string
+        && request.resource.data.clientName is string
+        && request.resource.data.eventTime is string
+        && request.resource.data.eventType in ['Court hearing', 'Consultation', 'Filing deadline', 'Meeting']
+        && request.resource.data.createdAt is string;
+      allow update: if inFirm(resource.data.firmId) && validTenantWrite()
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.title is string
+        && request.resource.data.location is string
+        && request.resource.data.clientName is string
+        && request.resource.data.eventTime is string
+        && request.resource.data.eventType in ['Court hearing', 'Consultation', 'Filing deadline', 'Meeting'];
+      allow delete: if inFirm(resource.data.firmId);
+    }
+
+    match /documents/{documentId} {
+      allow read: if inFirm(resource.data.firmId);
+      allow create: if validTenantWrite()
+        && request.resource.data.fileName is string
+        && request.resource.data.matterId is string
+        && matterInFirm(request.resource.data.matterId, request.auth.token.firmId)
+        && request.resource.data.storagePath is string
+        && request.resource.data.storagePath.matches('firms/' + request.auth.token.firmId + '/documents/' + documentId)
+        && request.resource.data.contentType is string
+        && request.resource.data.size is int
+        && request.resource.data.uploadedBy == request.auth.uid
+        && request.resource.data.createdAt is string;
+      allow update: if inFirm(resource.data.firmId)
+        && request.resource.data.firmId == resource.data.firmId
+        && request.resource.data.fileName is string
+        && request.resource.data.fileName.size() > 0
+        && request.resource.data.fileName.size() <= 180
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fileName']);
+      allow delete: if inFirm(resource.data.firmId);
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
